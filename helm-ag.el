@@ -28,13 +28,12 @@
   (require 'cl))
 
 (require 'helm)
-(require 'eshell)
 
 (defgroup helm-ag nil
   "the silver searcher with helm interface"
   :group 'helm)
 
-(defcustom helm-ag-base-command "ag --nocolor --nogroup"
+(defcustom helm-ag-base-command "ag --nocolor --nogroup --line-numbers"
   "Base command of `ag'"
   :type 'string
   :group 'helm-ag)
@@ -79,28 +78,37 @@
                            'helm-ag-command-history)))
     (helm-attrset 'recenter t)
     (with-current-buffer (helm-candidate-buffer 'global)
-      (let ((default-directory (or helm-ag-default-directory
-                                   default-directory)))
-        (eshell-command (helm-aif (helm-attr 'search-this-file)
-                            (format "%s %s" cmd it)
-                          cmd) t)
-        (helm-ag-save-current-context))
-      (when (zerop (length (buffer-string)))
-        (error "No output: '%s'" cmd))
-      (unless (zerop eshell-last-command-status)
-        (error "Failed: '%s'" cmd)))))
+      (let* ((default-directory (or helm-ag-default-directory
+                                   default-directory))
+             (result (call-process-shell-command 
+                      (format "%s %s" cmd (or (helm-attr 'search-this-file)
+                                              default-directory))
+                      nil t)))
+        (helm-ag-save-current-context)
+        (when (zerop (length (buffer-string)))
+          (error "No output: '%s'" cmd))
+        (unless (zerop result)
+          (error "Failed: '%s'" cmd))))))
 
 (defun helm-ag-find-file-action (candidate find-func)
-  (let* ((elems (split-string candidate ":"))
-         (search-this-file (helm-attr 'search-this-file))
-         (filename (or search-this-file (first elems)))
-         (line (string-to-number (if search-this-file
-                                     (first elems)
-                                   (second elems))))
-         (default-directory helm-ag-default-directory))
-    (funcall find-func filename)
-    (goto-char (point-min))
-    (forward-line (1- line))))
+  (flet ((string-number-p (string)
+          (string-match "^[0-9]+$" string)))
+    (let* ((elems (split-string candidate ":"))
+           (search-this-file (helm-attr 'search-this-file))
+           (filename (or search-this-file 
+                         ;; windowsの場合(c:\Program... のようにドライブレターに:が付く為)の暫定対処
+                         (if (string-number-p (second elems))
+                             (first elems)
+                           (concat (first elems) ":" (second elems)))))
+           (line (string-to-number (if search-this-file
+                                       (first elems)
+                                     (if (string-number-p (second elems))
+                                         (second elems)
+                                       (third elems)))))
+           (default-directory helm-ag-default-directory))
+      (funcall find-func filename)
+      (goto-char (point-min))
+      (forward-line (1- line)))))
 
 (defvar helm-ag-source
   '((name . "the silver searcher")
